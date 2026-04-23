@@ -244,7 +244,7 @@ const GLYPHS = ['H','X','Y','Z','★','◆','●','▲','♥','♣','♠','☼',
 const COLORS = ['#6dff8a','#ff4040','#5ac8ff','#ffb000','#c879ff','#ff79c6','#50fa7b','#f1fa8c','#ff9500','#a0f0ff'];
 
 const STORAGE_KEY = 'beast:world:v4';
-const INPUT_KEY_PREFIX = 'beast:input:v1:';
+const INPUT_KEY_PREFIX = 'beast:input:v4:';
 
 // === LOCAL STATE ===
 let myId = null, myGlyph = null, myColor = null;
@@ -314,7 +314,7 @@ async function readPlayerInput(playerId) {
 }
 async function writeMyInput(data) {
   if (!myId) return;
-  const payload = { id: myId, ts: Date.now(), ...data };
+  const payload = { id: myId, ...data };
   try {
     await window.storage.set(inputKey(myId), JSON.stringify(payload), true);
   } catch (e) { /* ignore */ }
@@ -600,13 +600,20 @@ async function hostTick() {
       changed = true;
       continue;
     }
-    const lastSeq = state.lastInputSeq[id] || 0;
-    if (typeof input.seq === 'number' && input.seq > lastSeq) {
+    let lastSeq = state.lastInputSeq[id] || 0;
+    if (input.resetSeq === true && lastSeq > 0) {
+      state.lastInputSeq[id] = 0;
+      lastSeq = 0;
+      changed = true;
+    }
+    if (Number.isSafeInteger(input.seq) && input.seq > lastSeq) {
       state.lastInputSeq[id] = input.seq;
-      if (Number.isInteger(input.dx) && Number.isInteger(input.dy)) {
-        if (applyMove(state, id, Math.max(-1, Math.min(1, input.dx)), Math.max(-1, Math.min(1, input.dy)))) {
-          changed = true;
-        }
+      changed = true;
+      if (
+        Number.isInteger(input.dx) && Number.isInteger(input.dy) &&
+        Math.abs(input.dx) <= 1 && Math.abs(input.dy) <= 1
+      ) {
+        applyMove(state, id, input.dx, input.dy);
       }
     }
   }
@@ -778,7 +785,7 @@ async function pollLoop() {
       if (Date.now() - lastHeartbeat > HEARTBEAT_INTERVAL) {
         lastHeartbeat = Date.now();
         if (isHost()) await pushState();
-        else writeMyInput({ seq: localInputSeq, heartbeat: lastHeartbeat });
+        else await writeMyInput({ seq: localInputSeq, heartbeat: lastHeartbeat });
       }
     }
     if (isHost()) {
@@ -786,8 +793,7 @@ async function pollLoop() {
     }
     // Death detection
     if (myId && state && state.players[myId] && !state.players[myId].alive && myAlive) {
-      myAlive = false;
-      showDeath();
+      markMeDead();
     }
   } catch (e) {
     console.error('poll error', e);
@@ -796,26 +802,22 @@ async function pollLoop() {
 }
 
 // === INPUT ===
-function tryMove(dx, dy) {
+async function tryMove(dx, dy) {
   if (!state || !myId || !state.players[myId] || !state.players[myId].alive) return;
   if (isHost()) {
     if (applyMove(state, myId, dx, dy)) {
-      pushState();
-      if (!state.players[myId].alive) {
-        myAlive = false;
-        showDeath();
-      }
+      await pushState();
+      const me = state.players[myId];
+      if (!me || !me.alive) markMeDead();
     }
     return;
   }
   if (applyMove(state, myId, dx, dy)) {
-    if (!state.players[myId].alive) {
-      myAlive = false;
-      showDeath();
-    }
+    const me = state.players[myId];
+    if (!me || !me.alive) markMeDead();
   }
   localInputSeq += 1;
-  writeMyInput({ seq: localInputSeq, dx, dy, heartbeat: Date.now() });
+  await writeMyInput({ seq: localInputSeq, dx, dy, heartbeat: Date.now() });
 }
 
 const keyMap = {
@@ -826,13 +828,13 @@ const keyMap = {
 };
 document.addEventListener('keydown', e => {
   const m = keyMap[e.key];
-  if (m) { e.preventDefault(); tryMove(m[0], m[1]); }
+  if (m) { e.preventDefault(); void tryMove(m[0], m[1]); }
 });
 
 const dirMap = { up:[0,-1], down:[0,1], left:[-1,0], right:[1,0] };
 document.querySelectorAll('.btn[data-dir]').forEach(btn => {
   let t;
-  const fire = () => tryMove.apply(null, dirMap[btn.dataset.dir]);
+  const fire = () => { void tryMove(...dirMap[btn.dataset.dir]); };
   const start = e => {
     e.preventDefault();
     fire();
@@ -939,7 +941,7 @@ async function doJoin() {
   state = remote;
   localInputSeq = 0;
   await writeRemote(state);
-  await writeMyInput({ seq: localInputSeq, heartbeat: Date.now() });
+  await writeMyInput({ seq: localInputSeq, resetSeq: true, heartbeat: Date.now() });
 
   document.getElementById('joinOverlay').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
@@ -952,6 +954,12 @@ async function doJoin() {
 
 function showDeath() {
   document.getElementById('deathOverlay').classList.remove('hidden');
+}
+
+function markMeDead() {
+  if (!myAlive) return;
+  myAlive = false;
+  showDeath();
 }
 
 document.getElementById('joinBtn').addEventListener('click', doJoin);
@@ -969,15 +977,16 @@ document.getElementById('rejoinBtn').addEventListener('click', async () => {
   myAlive = true;
   localInputSeq = 0;
   await writeRemote(state);
-  await writeMyInput({ seq: localInputSeq, heartbeat: Date.now() });
+  await writeMyInput({ seq: localInputSeq, resetSeq: true, heartbeat: Date.now() });
 });
 
 // Cleanup on close
 window.addEventListener('beforeunload', () => {
+  const now = Date.now();
   if (myId) {
     try {
       window.storage.set(inputKey(myId), JSON.stringify({
-        id: myId, leave: true, seq: localInputSeq, heartbeat: Date.now(), ts: Date.now(),
+        id: myId, leave: true, seq: localInputSeq, heartbeat: now,
       }), true);
     } catch (e) {}
   }
