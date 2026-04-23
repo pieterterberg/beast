@@ -28,4 +28,4 @@ Then open `http://localhost:8080`.
 
 ## Original game (1984)
 
-- https://www.mobygames.com/game/beast/
+- [https://www.mobygames.com/game/beast/](https://www.mobygames.com/game/23540/beast/)
