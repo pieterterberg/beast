@@ -243,7 +243,8 @@ const EMPTY = 0, WALL = 1, BLOCK = 2;
 const GLYPHS = ['H','X','Y','Z','★','◆','●','▲','♥','♣','♠','☼','Δ','Ω','Φ','Ψ','§','π','µ','∞','Ж','♪','¥','&'];
 const COLORS = ['#6dff8a','#ff4040','#5ac8ff','#ffb000','#c879ff','#ff79c6','#50fa7b','#f1fa8c','#ff9500','#a0f0ff'];
 
-const STORAGE_KEY = 'beast:world:v3';
+const STORAGE_KEY = 'beast:world:v4';
+const INPUT_KEY_PREFIX = 'beast:input:v1:';
 
 // === LOCAL STATE ===
 let myId = null, myGlyph = null, myColor = null;
@@ -254,6 +255,7 @@ let lastWrite = 0;
 let writeQueued = false;
 let lastBeastTick = 0;
 let lastCleanTick = 0;
+let localInputSeq = 0;
 
 // === CANVAS SETUP ===
 const canvas = document.getElementById('game');
@@ -299,6 +301,23 @@ async function pushState() {
     return;
   }
   await writeRemote(state);
+}
+
+function inputKey(playerId) {
+  return `${INPUT_KEY_PREFIX}${playerId}`;
+}
+async function readPlayerInput(playerId) {
+  try {
+    const r = await window.storage.get(inputKey(playerId), true);
+    return r ? JSON.parse(r.value) : null;
+  } catch (e) { return null; }
+}
+async function writeMyInput(data) {
+  if (!myId) return;
+  const payload = { id: myId, ts: Date.now(), ...data };
+  try {
+    await window.storage.set(inputKey(myId), JSON.stringify(payload), true);
+  } catch (e) { /* ignore */ }
 }
 
 // === WORLD GENERATION ===
@@ -563,6 +582,34 @@ async function hostTick() {
   if (!state) return;
   let changed = false;
   const now = Date.now();
+  state.lastInputSeq = state.lastInputSeq || {};
+
+  // Apply per-player input updates
+  for (const id in state.players) {
+    const input = await readPlayerInput(id);
+    if (!input) continue;
+    const p = state.players[id];
+    if (!p) continue;
+    if (typeof input.heartbeat === 'number') {
+      p.heartbeat = Math.max(p.heartbeat || 0, input.heartbeat);
+    }
+    if (input.leave) {
+      respawnBlocks(state, p.x, p.y, 10);
+      delete state.players[id];
+      delete state.lastInputSeq[id];
+      changed = true;
+      continue;
+    }
+    const lastSeq = state.lastInputSeq[id] || 0;
+    if (typeof input.seq === 'number' && input.seq > lastSeq) {
+      state.lastInputSeq[id] = input.seq;
+      if (Number.isInteger(input.dx) && Number.isInteger(input.dy)) {
+        if (applyMove(state, id, Math.max(-1, Math.min(1, input.dx)), Math.max(-1, Math.min(1, input.dy)))) {
+          changed = true;
+        }
+      }
+    }
+  }
 
   // Clean dead/disconnected players
   if (now - lastCleanTick > 1500) {
@@ -574,6 +621,7 @@ async function hostTick() {
       if (stale || deadAndLingered) {
         respawnBlocks(state, p.x, p.y, 10);
         delete state.players[id];
+        delete state.lastInputSeq[id];
         changed = true;
       }
     }
@@ -729,7 +777,8 @@ async function pollLoop() {
       state.players[myId].heartbeat = Date.now();
       if (Date.now() - lastHeartbeat > HEARTBEAT_INTERVAL) {
         lastHeartbeat = Date.now();
-        await pushState();
+        if (isHost()) await pushState();
+        else writeMyInput({ seq: localInputSeq, heartbeat: lastHeartbeat });
       }
     }
     if (isHost()) {
@@ -749,13 +798,24 @@ async function pollLoop() {
 // === INPUT ===
 function tryMove(dx, dy) {
   if (!state || !myId || !state.players[myId] || !state.players[myId].alive) return;
+  if (isHost()) {
+    if (applyMove(state, myId, dx, dy)) {
+      pushState();
+      if (!state.players[myId].alive) {
+        myAlive = false;
+        showDeath();
+      }
+    }
+    return;
+  }
   if (applyMove(state, myId, dx, dy)) {
-    pushState();
     if (!state.players[myId].alive) {
       myAlive = false;
       showDeath();
     }
   }
+  localInputSeq += 1;
+  writeMyInput({ seq: localInputSeq, dx, dy, heartbeat: Date.now() });
 }
 
 const keyMap = {
@@ -877,7 +937,9 @@ async function doJoin() {
   }
 
   state = remote;
+  localInputSeq = 0;
   await writeRemote(state);
+  await writeMyInput({ seq: localInputSeq, heartbeat: Date.now() });
 
   document.getElementById('joinOverlay').classList.add('hidden');
   document.getElementById('hud').classList.remove('hidden');
@@ -905,12 +967,21 @@ document.getElementById('rejoinBtn').addEventListener('click', async () => {
   };
   state = remote;
   myAlive = true;
+  localInputSeq = 0;
   await writeRemote(state);
+  await writeMyInput({ seq: localInputSeq, heartbeat: Date.now() });
 });
 
 // Cleanup on close
 window.addEventListener('beforeunload', () => {
-  if (myId && state && state.players[myId]) {
+  if (myId) {
+    try {
+      window.storage.set(inputKey(myId), JSON.stringify({
+        id: myId, leave: true, seq: localInputSeq, heartbeat: Date.now(), ts: Date.now(),
+      }), true);
+    } catch (e) {}
+  }
+  if (isHost() && myId && state && state.players[myId]) {
     delete state.players[myId];
     try {
       // Best-effort sync write — may not complete
