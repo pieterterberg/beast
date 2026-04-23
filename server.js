@@ -334,6 +334,17 @@ function killPlayer(player, killer) {
   }
 }
 
+function disconnectPlayer(player) {
+  if (!player) return;
+  player.connected = false;
+  player.ws = null;
+  if (player.alive) {
+    player.alive = false;
+    player.deathTime = Date.now();
+    markPlayer(player);
+  }
+}
+
 function applyMove(player, dx, dy) {
   const nx = player.x + dx;
   const ny = player.y + dy;
@@ -462,8 +473,7 @@ function cleanupPlayers(now) {
   for (const player of [...world.players.values()]) {
     const stale = now - player.lastSeen > PLAYER_TIMEOUT_MS;
     if (stale && player.alive) {
-      killPlayer(player, 'player');
-      player.connected = false;
+      disconnectPlayer(player);
     }
 
     if (!player.alive && player.deathTime && now - player.deathTime > DEATH_LINGER_MS) {
@@ -571,9 +581,7 @@ function handleMove(ws, msg) {
 function handleLeave(ws) {
   const player = ws.playerId ? world.players.get(ws.playerId) : null;
   if (!player) return;
-  player.connected = false;
-  player.ws = null;
-  if (player.alive) killPlayer(player, 'player');
+  disconnectPlayer(player);
 }
 
 function gameLoop() {

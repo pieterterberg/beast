@@ -48,12 +48,41 @@ function updateJoinError(message = '') {
   errorEl.textContent = message;
 }
 
+function isSafeId(id) {
+  return typeof id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(id);
+}
+
+function safeColor(value) {
+  if (typeof value !== 'string') return '#6dff8a';
+  return /^#[0-9a-fA-F]{6}$/.test(value) ? value : '#6dff8a';
+}
+
 function worldFromSnapshot(snapshot) {
+  const players = Object.create(null);
+  const fromPlayers = snapshot && snapshot.players && typeof snapshot.players === 'object' ? snapshot.players : {};
+  for (const [id, p] of Object.entries(fromPlayers)) {
+    if (!isSafeId(id) || !p || typeof p !== 'object') continue;
+    players[id] = {
+      id,
+      glyph: typeof p.glyph === 'string' ? p.glyph : '?',
+      color: safeColor(p.color),
+      x: Number.isInteger(p.x) ? p.x : 0,
+      y: Number.isInteger(p.y) ? p.y : 0,
+      alive: !!p.alive,
+    };
+  }
+
+  const beasts = Array.isArray(snapshot && snapshot.beasts)
+    ? snapshot.beasts
+      .filter((b) => b && isSafeId(b.id) && Number.isInteger(b.x) && Number.isInteger(b.y))
+      .map((b) => ({ id: b.id, x: b.x, y: b.y }))
+    : [];
+
   return {
-    grid: snapshot.grid,
-    players: snapshot.players,
-    beasts: snapshot.beasts,
-    tick: snapshot.tick,
+    grid: Array.isArray(snapshot && snapshot.grid) ? snapshot.grid : [],
+    players,
+    beasts,
+    tick: Number.isInteger(snapshot && snapshot.tick) ? snapshot.tick : 0,
   };
 }
 
@@ -109,11 +138,13 @@ function connect() {
 
     if (msg.t === 'delta' && state) {
       for (const c of msg.changes || []) {
+        if (!c || !Number.isInteger(c.x) || !Number.isInteger(c.y)) continue;
         if (state.grid[c.y] && typeof state.grid[c.y][c.x] !== 'undefined') {
           state.grid[c.y][c.x] = c.v;
         }
       }
       for (const p of msg.players || []) {
+        if (!p || !isSafeId(p.id)) continue;
         if (p.removed) {
           delete state.players[p.id];
         } else {
@@ -122,7 +153,7 @@ function connect() {
             ...prev,
             ...p,
             glyph: p.glyph || prev.glyph,
-            color: p.color || prev.color,
+            color: safeColor(p.color || prev.color),
           };
         }
       }
@@ -149,9 +180,11 @@ function connect() {
     if (msg.t === 'move_ack' && state && myId) {
       pendingMoves.delete(msg.seq);
       const me = state.players[myId];
-      if (me && (me.x !== msg.x || me.y !== msg.y)) {
-        me.x = msg.x;
-        me.y = msg.y;
+      const ackX = Number(msg.x);
+      const ackY = Number(msg.y);
+      if (me && Number.isFinite(ackX) && Number.isFinite(ackY) && (me.x !== ackX || me.y !== ackY)) {
+        me.x = ackX;
+        me.y = ackY;
       }
       return;
     }
@@ -189,10 +222,6 @@ function showGame() {
 
 function showDeath() {
   document.getElementById('deathOverlay').classList.remove('hidden');
-}
-
-function genId() {
-  return Math.random().toString(36).substring(2, 10);
 }
 
 function applyMove(localState, playerId, dx, dy) {
@@ -355,9 +384,15 @@ function updateHUD() {
   const alive = Object.values(state.players).filter((p) => p.alive);
   document.getElementById('players').textContent = alive.length;
   const list = document.getElementById('playerList');
-  list.innerHTML = alive.map((p) => (
-    `<span style="color:${p.color}${p.id === myId ? `;text-shadow:0 0 4px ${p.color}` : ''}">${p.glyph}</span>`
-  )).join('');
+  list.innerHTML = '';
+  for (const p of alive) {
+    const span = document.createElement('span');
+    const color = safeColor(p.color);
+    span.style.color = color;
+    if (p.id === myId) span.style.textShadow = `0 0 4px ${color}`;
+    span.textContent = typeof p.glyph === 'string' ? p.glyph : '?';
+    list.appendChild(span);
+  }
 }
 
 let cameraX = 0;
@@ -458,7 +493,6 @@ function doJoin() {
   if (!selectedGlyph) return;
   myGlyph = selectedGlyph;
   myColor = selectedColor;
-  myId = myId || genId();
   myAlive = true;
   updateJoinError('Connecting...');
   connect();
