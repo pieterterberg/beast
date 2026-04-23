@@ -82,6 +82,7 @@ function worldFromSnapshot(snapshot) {
     grid: Array.isArray(snapshot && snapshot.grid) ? snapshot.grid : [],
     players,
     beasts,
+    level: Number.isInteger(snapshot && snapshot.level) ? snapshot.level : 1,
     tick: Number.isInteger(snapshot && snapshot.tick) ? snapshot.tick : 0,
   };
 }
@@ -172,6 +173,7 @@ function connect() {
           state.beasts.push(b);
         }
       }
+      if (Number.isInteger(msg.level) && msg.level > 0) state.level = msg.level;
       if (typeof msg.tick === 'number') state.tick = msg.tick;
       updateHUD();
       const me = state.players[myId];
@@ -386,6 +388,7 @@ function renderColorPicker() {
 
 function updateHUD() {
   if (!state) return;
+  document.getElementById('level').textContent = state.level || 1;
   document.getElementById('beasts').textContent = state.beasts.length;
   const alive = Object.values(state.players).filter((p) => p.alive);
   document.getElementById('players').textContent = alive.length;

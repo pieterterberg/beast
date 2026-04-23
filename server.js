@@ -35,6 +35,8 @@ const world = {
   grid: null,
   players: new Map(),
   beasts: new Map(),
+  level: 1,
+  waveStarted: false,
   tick: 0,
   nextPlayerId: 1,
   nextBeastId: 1,
@@ -73,6 +75,10 @@ function desiredSize(playerCount) {
 
 function desiredBeasts(playerCount) {
   return BEAST_BASE + playerCount * BEAST_PER_PLAYER;
+}
+
+function targetBeastsForLevel(playerCount) {
+  return desiredBeasts(playerCount) + Math.max(0, world.level - 1);
 }
 
 function alivePlayers() {
@@ -235,6 +241,7 @@ function buildSnapshot() {
     grid,
     players,
     beasts,
+    level: world.level,
     tick: world.tick,
   };
 }
@@ -246,6 +253,7 @@ function flushDeltas() {
     changes: [...pending.cells.values()],
     players: [...pending.players.values()],
     beasts: [...pending.beasts.values()],
+    level: world.level,
     tick: world.tick,
   });
   pending.cells.clear();
@@ -483,16 +491,24 @@ function cleanupPlayers(now) {
     }
   }
 
-  const aliveCount = Math.max(1, alivePlayers().length);
-  const desired = desiredSize(aliveCount);
-  if (desired.cols < world.cols || desired.rows < world.rows) {
-    resizeWorld(Math.max(BASE_COLS, desired.cols), Math.max(BASE_ROWS, desired.rows));
+  const alive = alivePlayers();
+  if (!alive.length) {
+    if (world.beasts.size) {
+      for (const beast of world.beasts.values()) markBeastRemoved(beast.id);
+      world.beasts.clear();
+    }
+    world.level = 1;
+    world.waveStarted = false;
     return;
   }
 
-  const targetBeasts = desiredBeasts(aliveCount);
-  while (world.beasts.size < targetBeasts) {
-    if (!spawnBeast()) break;
+  if (world.beasts.size === 0) {
+    if (world.waveStarted) world.level += 1;
+    world.waveStarted = true;
+    const targetBeasts = targetBeastsForLevel(alive.length);
+    while (world.beasts.size < targetBeasts) {
+      if (!spawnBeast()) break;
+    }
   }
 }
 
@@ -508,12 +524,6 @@ function handleJoin(ws, msg) {
   if (glyphTaken) {
     send(ws, { t: 'error', code: 'glyph_taken', message: 'Glyph already taken.' });
     return;
-  }
-
-  const aliveCount = alivePlayers().length;
-  const nextSize = desiredSize(Math.max(1, aliveCount + (ws.playerId ? 0 : 1)));
-  if (nextSize.cols > world.cols || nextSize.rows > world.rows) {
-    resizeWorld(Math.max(world.cols, nextSize.cols), Math.max(world.rows, nextSize.rows));
   }
 
   let player = ws.playerId ? world.players.get(ws.playerId) : null;
@@ -549,9 +559,12 @@ function handleJoin(ws, msg) {
 
   markPlayer(player);
 
-  const targetBeasts = desiredBeasts(Math.max(1, alivePlayers().length));
-  while (world.beasts.size < targetBeasts) {
-    if (!spawnBeast()) break;
+  if (world.beasts.size === 0) {
+    world.waveStarted = true;
+    const targetBeasts = targetBeastsForLevel(Math.max(1, alivePlayers().length));
+    while (world.beasts.size < targetBeasts) {
+      if (!spawnBeast()) break;
+    }
   }
 
   send(ws, { t: 'welcome', you: player.id, world: buildSnapshot() });
