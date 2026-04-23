@@ -77,8 +77,18 @@ function desiredBeasts(playerCount) {
   return BEAST_BASE + playerCount * BEAST_PER_PLAYER;
 }
 
-function targetBeastsForLevel(playerCount) {
-  return desiredBeasts(playerCount) + Math.max(0, world.level - 1);
+function spawnWave(incrementLevel) {
+  const nextLevel = incrementLevel ? world.level + 1 : world.level;
+  const aliveCount = Math.max(1, alivePlayers().length);
+  const targetBeasts = desiredBeasts(aliveCount) + Math.max(0, nextLevel - 1);
+  let spawned = 0;
+  while (world.beasts.size < targetBeasts) {
+    if (!spawnBeast()) break;
+    spawned += 1;
+  }
+  if (!spawned) return;
+  world.level = nextLevel;
+  world.waveStarted = true;
 }
 
 function alivePlayers() {
@@ -503,12 +513,7 @@ function cleanupPlayers(now) {
   }
 
   if (world.beasts.size === 0) {
-    if (world.waveStarted) world.level += 1;
-    world.waveStarted = true;
-    const targetBeasts = targetBeastsForLevel(alive.length);
-    while (world.beasts.size < targetBeasts) {
-      if (!spawnBeast()) break;
-    }
+    spawnWave(world.waveStarted);
   }
 }
 
@@ -560,11 +565,7 @@ function handleJoin(ws, msg) {
   markPlayer(player);
 
   if (world.beasts.size === 0) {
-    world.waveStarted = true;
-    const targetBeasts = targetBeastsForLevel(Math.max(1, alivePlayers().length));
-    while (world.beasts.size < targetBeasts) {
-      if (!spawnBeast()) break;
-    }
+    spawnWave(false);
   }
 
   send(ws, { t: 'welcome', you: player.id, world: buildSnapshot() });

@@ -82,7 +82,7 @@ function worldFromSnapshot(snapshot) {
     grid: Array.isArray(snapshot && snapshot.grid) ? snapshot.grid : [],
     players,
     beasts,
-    level: Number.isInteger(snapshot && snapshot.level) ? snapshot.level : 1,
+    level: Number.isInteger(snapshot && snapshot.level) && snapshot.level > 0 ? snapshot.level : 1,
     tick: Number.isInteger(snapshot && snapshot.tick) ? snapshot.tick : 0,
   };
 }
