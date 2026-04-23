@@ -138,10 +138,15 @@ function connect() {
 
     if (msg.t === 'delta' && state) {
       for (const c of msg.changes || []) {
-        if (!c || !Number.isInteger(c.x) || !Number.isInteger(c.y)) continue;
-        if (state.grid[c.y] && typeof state.grid[c.y][c.x] !== 'undefined') {
-          state.grid[c.y][c.x] = c.v;
-        }
+        if (!c) continue;
+        const x = Number(c.x);
+        const y = Number(c.y);
+        if (!Number.isInteger(x) || !Number.isInteger(y)) continue;
+        if (String(x) !== String(c.x) || String(y) !== String(c.y)) continue;
+        if (y < 0 || y >= state.grid.length) continue;
+        const row = state.grid[y];
+        if (!Array.isArray(row) || x < 0 || x >= row.length) continue;
+        row[x] = c.v;
       }
       for (const p of msg.players || []) {
         if (!p || !isSafeId(p.id)) continue;
@@ -227,6 +232,7 @@ function showDeath() {
 function applyMove(localState, playerId, dx, dy) {
   const player = localState.players[playerId];
   if (!player || !player.alive) return false;
+  if (!Array.isArray(localState.grid) || localState.grid.length === 0 || !Array.isArray(localState.grid[0])) return false;
   const cols = localState.grid[0].length;
   const rows = localState.grid.length;
   const nx = player.x + dx;
@@ -430,6 +436,7 @@ function render() {
   if (!state) return;
 
   const grid = state.grid;
+  if (!Array.isArray(grid) || grid.length === 0 || !Array.isArray(grid[0])) return;
   const cols = grid[0].length;
   const rows = grid.length;
   const me = state.players[myId];
