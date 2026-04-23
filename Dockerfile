@@ -1,8 +1,10 @@
-FROM python:3.12-alpine
+FROM node:20-alpine
 
 WORKDIR /app
-COPY . /app
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY . .
 
 EXPOSE 8080
 
-CMD ["python", "-m", "http.server", "8080"]
+CMD ["npm", "start"]

@@ -3,7 +3,8 @@
 Run locally:
 
 ```bash
-python -m http.server 8080
+npm install
+npm start
 ```
 
 Then open `http://localhost:8080`.
